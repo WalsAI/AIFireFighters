@@ -9,7 +9,7 @@ import cv2
 from torch.utils.data import DataLoader, Dataset
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
-from torchmetrics import Accuracy
+from torchmetrics import Accuracy, Precision, Recall, F1Score
 
 # Define FireDataset class
 class FireDataset(Dataset):
@@ -71,14 +71,17 @@ class FireDataModule(pl.LightningDataModule):
 
 # Define FireClassifier Model
 class FireClassifier(pl.LightningModule):
-    def __init__(self, lr=1e-4):
+    def __init__(self, lr=1e-2):
         super().__init__()
-        self.model = models.resnet18(pretrained=True)
-        # self.model = models.resnet101(pretrained=True)
+        # self.model = models.resnet18(pretrained=True)
+        self.model = models.resnet101(pretrained=True)
         in_features = self.model.fc.in_features
         self.model.fc = nn.Linear(in_features, 1)  # Binary classification
         self.criterion = nn.BCEWithLogitsLoss()
         self.accuracy = Accuracy(task='binary')
+        self.precision = Precision(task='binary')
+        self.recall = Recall(task='binary')
+        self.f1 = F1Score(task='binary')
         self.lr = lr
     
     def forward(self, x):
@@ -89,8 +92,14 @@ class FireClassifier(pl.LightningModule):
         outputs = self(images)
         loss = self.criterion(outputs, labels.unsqueeze(1).float())
         acc = self.accuracy(outputs.sigmoid(), labels.unsqueeze(1).float())
+        prec = self.precision(outputs.sigmoid(), labels.unsqueeze(1).float())
+        rec = self.recall(outputs.sigmoid(), labels.unsqueeze(1).float())
+        f1 = self.f1(outputs.sigmoid(), labels.unsqueeze(1).float())
         self.log('train_loss', loss, prog_bar=True)
         self.log('train_acc', acc, prog_bar=True)
+        self.log('train_prec', prec, prog_bar=True)
+        self.log('train_rec', rec, prog_bar=True)
+        self.log('train_f1', f1, prog_bar=True)
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -98,16 +107,22 @@ class FireClassifier(pl.LightningModule):
         outputs = self(images)
         loss = self.criterion(outputs, labels.unsqueeze(1).float())
         acc = self.accuracy(outputs.sigmoid(), labels.unsqueeze(1).float())
+        prec = self.precision(outputs.sigmoid(), labels.unsqueeze(1).float())
+        rec = self.recall(outputs.sigmoid(), labels.unsqueeze(1).float())
+        f1 = self.f1(outputs.sigmoid(), labels.unsqueeze(1).float())
         self.log('val_loss', loss, prog_bar=True, on_epoch=True)
         self.log('val_acc', acc, prog_bar=True, on_epoch=True)
+        self.log('val_prec', prec, prog_bar=True, on_epoch=True)
+        self.log('val_rec', rec, prog_bar=True, on_epoch=True)
+        self.log('val_f1', f1, prog_bar=True, on_epoch=True)
     
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=self.lr)
 
 # Training Pipeline
-def train_model(csv_file, root_dir, batch_size=32, max_epochs=10):
+def train_model(csv_file, root_dir, batch_size=128, max_epochs=10):
     checkpoint_callback = ModelCheckpoint(
-        dirpath="checkpoints/resnet18_wildfire_dataset",  # Directory to save checkpoints
+        dirpath="checkpoints/resnet101_wildfire_dataset_2",  # Directory to save checkpoints
         filename="fire-classifier-{epoch:02d}-{val_acc:.2f}",  # Checkpoint filename format
         save_top_k=1,  # Saves top 3 models based on validation loss
         monitor="val_acc",  # Monitor validation loss
@@ -121,5 +136,5 @@ def train_model(csv_file, root_dir, batch_size=32, max_epochs=10):
 
 # Example usage:
 os.environ["CUDA_VISIBLE_DEVICES"] ="0"
-# train_model('datasets/forest_dataset_2.csv', 'datasets/forest_dataset', batch_size=32, max_epochs=10)
-train_model('datasets/wildfire_dataset.csv', '/raid/bigdata/userhome/ionut.serban/sharedData/controlnet_mirpr/AIFireFighters/datasets/wildfire_dataset_r', batch_size=32, max_epochs=10)
+# train_model('datasets/forest_dataset_2.csv', 'datasets/forest_dataset', batch_size=64, max_epochs=10)
+train_model('datasets/wildfire_dataset.csv', '/raid/bigdata/userhome/ionut.serban/sharedData/controlnet_mirpr/AIFireFighters/datasets/wildfire_dataset_r', batch_size=64, max_epochs=10)
