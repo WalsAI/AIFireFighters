@@ -52,21 +52,32 @@ def predict(image):
     confidence = round(probability * 100, 2)  # Convertim la procentaj
     
     if probability > 0.5:
-        return f"🔥 Fire detected!\nConfidence: {confidence}%"
+        return f"🔥 Incendiu forestier detectat!\nConfidenta: {confidence}%"
     else:
-        return f"✅ No fire detected\nConfidence: {100 - confidence}%"
+        return f"✅ Nu s-a detectat niciun incendiu!\nConfidenta: {100 - confidence}%"
 
-# Creează interfața Gradio
-iface = gr.Interface(
-    fn=predict,
-    inputs=gr.Image(type="numpy"),
-    outputs="text",
-    title="🔥 Fire Detection Model 🔥",
-    description="📸 Încărcați o imagine pentru a verifica dacă conține foc.\n"
-)
 
-# Rulează aplicația Gradio
-print(f"Using device: {torch.device('cuda:3')}")
-print(f"CUDA available: {torch.cuda.is_available()}")
+with gr.Blocks() as demo:
+    gr.Markdown("### 🔥 Fire Detection Model 🔥")
+    gr.Markdown("📸 Încărcați o imagine pentru a verifica dacă conține un incendiu forestier.\n")
+    
+    # Definim un input de imagine
+    image_input = gr.Image(type="numpy", label="Încărcați imaginea")
+    
+    run_button = gr.Button("Run")
+    
+    # Definim output-ul (un textbox pentru rezultat)
+    output_text = gr.Textbox(label="Rezultatul Detecției", interactive=False)
+    
+    # Adăugăm un buton de Ru
+    
+    # Funcția care va fi apelată la apăsarea butonului
+    run_button.click(fn=predict, inputs=image_input, outputs=output_text)
 
-iface.launch()
+demo.launch()
+
+# # Rulează aplicația Gradio
+# print(f"Using device: {torch.device('cuda:3')}")
+# print(f"CUDA available: {torch.cuda.is_available()}")
+
+# iface.launch()
