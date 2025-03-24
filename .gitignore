@@ -1,5 +1,8 @@
 datasets/forest_dataset
 datasets/wildfire_dataset
+datasets/wildfire_dataset_r
+
+*.ckpt
 
 
 # Byte-compiled / optimized / DLL files
