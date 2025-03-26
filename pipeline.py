@@ -10,6 +10,8 @@ from torch.utils.data import DataLoader, Dataset
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint
 from torchmetrics import Accuracy, Precision, Recall, F1Score
+from sklearn import metrics
+import matplotlib.pyplot as plt
 
 # Define FireDataset class
 class FireDataset(Dataset):
@@ -71,19 +73,22 @@ class FireDataModule(pl.LightningDataModule):
 
 # Define FireClassifier Model
 class FireClassifier(pl.LightningModule):
-    def __init__(self, lr=1e-2):
+    def __init__(self, lr=1e-4):
         super().__init__()
-        # self.model = models.resnet18(pretrained=True)
-        self.model = models.resnet101(pretrained=True)
+        self.model = models.resnet18(pretrained=True)
         in_features = self.model.fc.in_features
         self.model.fc = nn.Linear(in_features, 1)  # Binary classification
         self.criterion = nn.BCEWithLogitsLoss()
+        
         self.accuracy = Accuracy(task='binary')
         self.precision = Precision(task='binary')
         self.recall = Recall(task='binary')
         self.f1 = F1Score(task='binary')
+        
         self.lr = lr
-    
+        self.all_preds = []
+        self.all_labels = []
+
     def forward(self, x):
         return self.model(x)
     
@@ -91,38 +96,87 @@ class FireClassifier(pl.LightningModule):
         images, labels = batch
         outputs = self(images)
         loss = self.criterion(outputs, labels.unsqueeze(1).float())
-        acc = self.accuracy(outputs.sigmoid(), labels.unsqueeze(1).float())
-        prec = self.precision(outputs.sigmoid(), labels.unsqueeze(1).float())
-        rec = self.recall(outputs.sigmoid(), labels.unsqueeze(1).float())
-        f1 = self.f1(outputs.sigmoid(), labels.unsqueeze(1).float())
+
+        preds = (outputs.sigmoid() > 0.5).int()  # Convert logits to binary predictions
+        labels = labels.view(-1).cpu().numpy()
+        preds = preds.view(-1).cpu().numpy()
+
+        # Accumulate predictions for confusion matrix
+        self.all_preds.extend(preds)
+        self.all_labels.extend(labels)
+
+
+
         self.log('train_loss', loss, prog_bar=True)
-        self.log('train_acc', acc, prog_bar=True)
-        self.log('train_prec', prec, prog_bar=True)
-        self.log('train_rec', rec, prog_bar=True)
-        self.log('train_f1', f1, prog_bar=True)
+
         return loss
-    
+
     def validation_step(self, batch, batch_idx):
         images, labels = batch
         outputs = self(images)
         loss = self.criterion(outputs, labels.unsqueeze(1).float())
-        acc = self.accuracy(outputs.sigmoid(), labels.unsqueeze(1).float())
-        prec = self.precision(outputs.sigmoid(), labels.unsqueeze(1).float())
-        rec = self.recall(outputs.sigmoid(), labels.unsqueeze(1).float())
-        f1 = self.f1(outputs.sigmoid(), labels.unsqueeze(1).float())
-        self.log('val_loss', loss, prog_bar=True, on_epoch=True)
-        self.log('val_acc', acc, prog_bar=True, on_epoch=True)
-        self.log('val_prec', prec, prog_bar=True, on_epoch=True)
-        self.log('val_rec', rec, prog_bar=True, on_epoch=True)
-        self.log('val_f1', f1, prog_bar=True, on_epoch=True)
+
+        preds = (outputs.sigmoid() > 0.5).int()
+        labels = labels.view(-1).cpu().numpy()
+        preds = preds.view(-1).cpu().numpy()
+
+        self.all_preds.extend(preds)
+        self.all_labels.extend(labels)
+
+        self.log('val_loss', loss, prog_bar=True)
+
+    def on_train_epoch_end(self):
+        if len(self.all_labels) == 0 or len(self.all_preds) == 0:
+            print("Skipping confusion matrix computation (empty predictions or labels).")
+            return
+        
+        cm = metrics.confusion_matrix(self.all_labels, self.all_preds)
+        cm_display = metrics.ConfusionMatrixDisplay(cm, display_labels=[0, 1])
+        cm_display.plot()
+        plt.savefig(f'train_confusion_matrix_epoch_{self.current_epoch}.png')
+        plt.close()
+        prec = self.precision(torch.tensor(self.all_preds), torch.tensor(self.all_labels))
+        rec = self.recall(torch.tensor(self.all_preds), torch.tensor(self.all_labels))
+        f1 = self.f1(torch.tensor(self.all_preds), torch.tensor(self.all_labels))
+        acc = self.accuracy(torch.tensor(preds), torch.tensor(labels))
+        self.log('train_prec', prec, prog_bar=True)
+        self.log('train_rec', rec, prog_bar=True)
+        self.log('train_f1', f1, prog_bar=True)
+        self.log('train_acc', acc, prog_bar=True)
     
+        self.all_preds = []
+        self.all_labels = []
+
+    def on_validation_epoch_end(self):
+        if len(self.all_labels) == 0 or len(self.all_preds) == 0:
+            print("Skipping confusion matrix computation (empty predictions or labels).")
+            return
+
+        cm = metrics.confusion_matrix(self.all_labels, self.all_preds)
+        cm_display = metrics.ConfusionMatrixDisplay(cm, display_labels=[0, 1])
+        cm_display.plot()
+        plt.savefig(f'val_confusion_matrix_epoch_{self.current_epoch}.png')
+        plt.close()
+        prec = self.precision(torch.tensor(self.all_preds), torch.tensor(self.all_labels))
+        rec = self.recall(torch.tensor(self.all_preds), torch.tensor(self.all_labels))
+        f1 = self.f1(torch.tensor(self.all_preds), torch.tensor(self.all_labels))
+        acc = self.accuracy(torch.tensor(self.all_preds), torch.tensor(self.all_labels))
+        self.log('val_prec', prec, prog_bar=True)
+        self.log('val_rec', rec, prog_bar=True)
+        self.log('val_f1', f1, prog_bar=True)
+        self.log('val_acc', acc, prog_bar=True)
+
+        self.all_preds = []
+        self.all_labels = []
+
+
     def configure_optimizers(self):
         return optim.Adam(self.parameters(), lr=self.lr)
 
 # Training Pipeline
 def train_model(csv_file, root_dir, batch_size=128, max_epochs=10):
     checkpoint_callback = ModelCheckpoint(
-        dirpath="checkpoints/resnet101_wildfire_dataset_2",  # Directory to save checkpoints
+        dirpath="checkpoints/resnet18_forest_dataset_4",  # Directory to save checkpoints
         filename="fire-classifier-{epoch:02d}-{val_acc:.2f}",  # Checkpoint filename format
         save_top_k=1,  # Saves top 3 models based on validation loss
         monitor="val_acc",  # Monitor validation loss
@@ -137,4 +191,4 @@ def train_model(csv_file, root_dir, batch_size=128, max_epochs=10):
 # Example usage:
 os.environ["CUDA_VISIBLE_DEVICES"] ="0"
 # train_model('datasets/forest_dataset_2.csv', 'datasets/forest_dataset', batch_size=64, max_epochs=10)
-train_model('datasets/wildfire_dataset.csv', '/raid/bigdata/userhome/ionut.serban/sharedData/controlnet_mirpr/AIFireFighters/datasets/wildfire_dataset_r', batch_size=64, max_epochs=10)
+train_model('datasets/forest_dataset_2.csv', '/raid/bigdata/userhome/ionut.serban/sharedData/controlnet_mirpr/AIFireFighters/datasets/forest_dataset', batch_size=32, max_epochs=10)
